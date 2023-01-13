@@ -40,12 +40,14 @@ def spmm(A: Union[SparseMatrix, DiagMatrix], X: torch.Tensor) -> torch.Tensor:
     >>> print(result.shape)
     torch.Size([2, 3])
     """
+    """
     assert isinstance(
         A, (SparseMatrix, DiagMatrix)
     ), f"Expect arg1 to be a SparseMatrix or DiagMatrix object, got {type(A)}"
     assert isinstance(
         X, torch.Tensor
     ), f"Expect arg2 to be a torch.Tensor, got {type(X)}"
+    """
 
     # The input is a DiagMatrix. Cast it to SparseMatrix
     if not isinstance(A, SparseMatrix):

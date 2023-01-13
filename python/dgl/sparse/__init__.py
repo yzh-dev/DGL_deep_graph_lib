@@ -5,17 +5,6 @@ import sys
 import torch
 
 from .._ffi import libinfo
-from .diag_matrix import *
-from .elementwise_op import *
-from .elementwise_op_diag import *
-from .elementwise_op_sp import *
-from .matmul import *
-from .reduction import *  # pylint: disable=W0622
-from .sddmm import *
-from .softmax import *
-from .sparse_matrix import *
-from .unary_op_diag import *
-from .unary_op_sp import *
 
 
 def load_dgl_sparse():
@@ -34,3 +23,15 @@ def load_dgl_sparse():
 # TODO(zhenkun): support other platforms
 if sys.platform.startswith("linux"):
     load_dgl_sparse()
+
+from .diag_matrix import *
+from .elementwise_op import *
+from .elementwise_op_diag import *
+from .elementwise_op_sp import *
+from .matmul import *
+from .reduction import *  # pylint: disable=W0622
+from .sddmm import *
+from .softmax import *
+from .sparse_matrix import *
+from .unary_op_diag import *
+from .unary_op_sp import *

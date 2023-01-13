@@ -52,6 +52,7 @@ def inv(D: DiagMatrix) -> DiagMatrix:
     return diag(1.0 / D.val, D.shape)
 
 
-DiagMatrix.neg = neg
+# neg and inv cause TorchScirpt exceeding maximum recursion depth.
+# DiagMatrix.neg = neg
 DiagMatrix.__neg__ = neg
-DiagMatrix.inv = inv
+# DiagMatrix.inv = inv

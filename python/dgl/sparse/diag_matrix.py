@@ -26,6 +26,9 @@ class DiagMatrix:
         Shape of the matrix.
     """
 
+    _val: torch.Tensor
+    _shape: Tuple[int, int]
+
     def __init__(
         self, val: torch.Tensor, shape: Optional[Tuple[int, int]] = None
     ):
@@ -52,7 +55,7 @@ class DiagMatrix:
         return self._val
 
     @property
-    def shape(self) -> Tuple[int]:
+    def shape(self) -> Tuple[int, int]:
         """Shape of the sparse matrix.
 
         Returns
@@ -62,9 +65,11 @@ class DiagMatrix:
         """
         return self._shape
 
+    @torch.jit.unused
     def __repr__(self):
         return _diag_matrix_str(self)
 
+    @torch.jit.unused
     @property
     def nnz(self) -> int:
         """Return the number of non-zero values in the matrix
@@ -76,6 +81,7 @@ class DiagMatrix:
         """
         return self.val.shape[0]
 
+    @torch.jit.unused
     @property
     def dtype(self) -> torch.dtype:
         """Return the data type of the matrix
@@ -87,6 +93,7 @@ class DiagMatrix:
         """
         return self.val.dtype
 
+    @torch.jit.unused
     @property
     def device(self) -> torch.device:
         """Return the device of the matrix
@@ -98,6 +105,7 @@ class DiagMatrix:
         """
         return self.val.device
 
+    @torch.jit.unused
     def as_sparse(self) -> SparseMatrix:
         """Convert the diagonal matrix into a sparse matrix object
 
@@ -122,6 +130,7 @@ class DiagMatrix:
         row = col = torch.arange(len(self.val)).to(self.device)
         return from_coo(row=row, col=col, val=self.val, shape=self.shape)
 
+    @torch.jit.unused
     def dense(self) -> torch.Tensor:
         """Return a dense representation of the matrix.
 
@@ -167,6 +176,7 @@ class DiagMatrix:
         """
         return DiagMatrix(self.val, self.shape[::-1])
 
+    @torch.jit.unused
     def to(self, device=None, dtype=None):
         """Perform matrix dtype and/or device conversion. If the target device
         and dtype are already in use, the original matrix will be returned.
@@ -204,6 +214,7 @@ class DiagMatrix:
 
         return diag(self.val.to(device=device, dtype=dtype), self.shape)
 
+    @torch.jit.unused
     def cuda(self):
         """Move the matrix to GPU. If the matrix is already on GPU, the
         original matrix will be returned. If multiple GPU devices exist,
@@ -225,6 +236,7 @@ class DiagMatrix:
         """
         return self.to(device="cuda")
 
+    @torch.jit.unused
     def cpu(self):
         """Move the matrix to CPU. If the matrix is already on CPU, the
         original matrix will be returned.
@@ -245,6 +257,7 @@ class DiagMatrix:
         """
         return self.to(device="cpu")
 
+    @torch.jit.unused
     def float(self):
         """Convert the matrix values to float data type. If the matrix already
         uses float data type, the original matrix will be returned.
@@ -265,6 +278,7 @@ class DiagMatrix:
         """
         return self.to(dtype=torch.float)
 
+    @torch.jit.unused
     def double(self):
         """Convert the matrix values to double data type. If the matrix already
         uses double data type, the original matrix will be returned.
@@ -285,6 +299,7 @@ class DiagMatrix:
         """
         return self.to(dtype=torch.double)
 
+    @torch.jit.unused
     def int(self):
         """Convert the matrix values to int data type. If the matrix already
         uses int data type, the original matrix will be returned.
@@ -305,6 +320,7 @@ class DiagMatrix:
         """
         return self.to(dtype=torch.int)
 
+    @torch.jit.unused
     def long(self):
         """Convert the matrix values to long data type. If the matrix already
         uses long data type, the original matrix will be returned.

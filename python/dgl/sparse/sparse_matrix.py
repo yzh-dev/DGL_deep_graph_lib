@@ -8,7 +8,9 @@ import torch
 class SparseMatrix:
     r"""Class for sparse matrix."""
 
-    def __init__(self, c_sparse_matrix: torch.ScriptObject):
+    c_sparse_matrix : torch.classes.dgl_sparse.SparseMatrix
+
+    def __init__(self, c_sparse_matrix: torch.classes.dgl_sparse.SparseMatrix):
         self.c_sparse_matrix = c_sparse_matrix
 
     @property
@@ -22,6 +24,7 @@ class SparseMatrix:
         """
         return self.c_sparse_matrix.val()
 
+    @torch.jit.unused
     @property
     def shape(self) -> Tuple[int]:
         """Shape of the sparse matrix.
@@ -44,6 +47,7 @@ class SparseMatrix:
         """
         return self.c_sparse_matrix.nnz()
 
+    @torch.jit.unused
     @property
     def dtype(self) -> torch.dtype:
         """Data type of the values of the sparse matrix.
@@ -56,6 +60,7 @@ class SparseMatrix:
         # FIXME: find a proper way to pass dtype from C++ to Python
         return self.c_sparse_matrix.val().dtype
 
+    @torch.jit.unused
     @property
     def device(self) -> torch.device:
         """Device of the sparse matrix.
@@ -89,10 +94,11 @@ class SparseMatrix:
         """
         return self.coo()[1]
 
+    @torch.jit.unused
     def __repr__(self):
         return _sparse_matrix_str(self)
 
-    def coo(self) -> Tuple[torch.Tensor, ...]:
+    def coo(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get the coordinate (COO) representation of the sparse matrix.
 
         Returns
@@ -102,7 +108,7 @@ class SparseMatrix:
         """
         return self.c_sparse_matrix.coo()
 
-    def csr(self) -> Tuple[torch.Tensor, ...]:
+    def csr(self) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         r"""Get the compressed sparse row (CSR) representation of the sparse
         matrix.
 
@@ -114,7 +120,7 @@ class SparseMatrix:
         """
         return self.c_sparse_matrix.csr()
 
-    def csc(self) -> Tuple[torch.Tensor, ...]:
+    def csc(self) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         r"""Get the compressed sparse column (CSC) representation of the sparse
         matrix.
 
@@ -126,6 +132,7 @@ class SparseMatrix:
         """
         return self.c_sparse_matrix.csc()
 
+    @torch.jit.unused
     def dense(self) -> torch.Tensor:
         """Return a dense representation of the matrix.
 
@@ -174,6 +181,7 @@ class SparseMatrix:
         """
         return SparseMatrix(self.c_sparse_matrix.transpose())
 
+    @torch.jit.unused
     def to(self, device=None, dtype=None):
         """Perform matrix dtype and/or device conversion. If the target device
         and dtype are already in use, the original matrix will be returned.
@@ -223,6 +231,7 @@ class SparseMatrix:
             val = self.val.to(device=device, dtype=dtype)
             return from_coo(row, col, val, self.shape)
 
+    @torch.jit.unused
     def cuda(self):
         """Move the matrix to GPU. If the matrix is already on GPU, the
         original matrix will be returned. If multiple GPU devices exist,
@@ -247,6 +256,7 @@ class SparseMatrix:
         """
         return self.to(device="cuda")
 
+    @torch.jit.unused
     def cpu(self):
         """Move the matrix to CPU. If the matrix is already on CPU, the
         original matrix will be returned.
@@ -270,6 +280,7 @@ class SparseMatrix:
         """
         return self.to(device="cpu")
 
+    @torch.jit.unused
     def float(self):
         """Convert the matrix values to float data type. If the matrix already
         uses float data type, the original matrix will be returned.
@@ -294,6 +305,7 @@ class SparseMatrix:
         """
         return self.to(dtype=torch.float)
 
+    @torch.jit.unused
     def double(self):
         """Convert the matrix values to double data type. If the matrix already
         uses double data type, the original matrix will be returned.
@@ -317,6 +329,7 @@ class SparseMatrix:
         """
         return self.to(dtype=torch.double)
 
+    @torch.jit.unused
     def int(self):
         """Convert the matrix values to int data type. If the matrix already
         uses int data type, the original matrix will be returned.
@@ -340,6 +353,7 @@ class SparseMatrix:
         """
         return self.to(dtype=torch.int)
 
+    @torch.jit.unused
     def long(self):
         """Convert the matrix values to long data type. If the matrix already
         uses long data type, the original matrix will be returned.
@@ -363,6 +377,7 @@ class SparseMatrix:
         """
         return self.to(dtype=torch.long)
 
+    @torch.jit.unused
     def coalesce(self):
         """Return a coalesced sparse matrix.
 

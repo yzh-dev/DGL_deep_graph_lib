@@ -28,5 +28,6 @@ def neg(A: SparseMatrix) -> SparseMatrix:
     return val_like(A, -A.val)
 
 
-SparseMatrix.neg = neg
+# neg causes TorchScirpt exceeding maximum recursion depth.
+# SparseMatrix.neg = neg
 SparseMatrix.__neg__ = neg
