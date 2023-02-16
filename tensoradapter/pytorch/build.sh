@@ -20,7 +20,7 @@ if [ $# -eq 0 ]; then
 	cp -v $CPSOURCE $BINDIR/tensoradapter/pytorch
 else
 	for PYTHON_INTERP in $@; do
-		TORCH_VER=$($PYTHON_INTERP -c 'import torch; print(torch.__version__.split("+")[0])')
+		TORCH_VER=$($PYTHON_INTERP -c 'import torch; print(torch.__version__)')
 		mkdir -p $TORCH_VER
 		cd $TORCH_VER
 		$CMAKE_COMMAND $CMAKE_FLAGS -DPYTHON_INTERP=$PYTHON_INTERP ../..
