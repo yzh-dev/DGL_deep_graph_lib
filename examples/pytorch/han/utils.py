@@ -126,8 +126,9 @@ def get_binary_mask(total_size, indices):
 
 def load_acm(remove_self_loop):
     url = "dataset/ACM3025.pkl"
-    data_path = get_download_dir() + "/ACM3025.pkl"
-    download(_get_dgl_url(url), path=data_path)
+    # data_path = get_download_dir() + "/ACM3025.pkl"
+    data_path = "./data/ACM3025.pkl"
+    # download(_get_dgl_url(url), path=data_path)#避免重复下载
 
     with open(data_path, "rb") as f:
         data = pickle.load(f)
@@ -137,7 +138,7 @@ def load_acm(remove_self_loop):
         torch.from_numpy(data["feature"].todense()).float(),
     )
     num_classes = labels.shape[1]
-    labels = labels.nonzero()[:, 1]
+    labels = labels.nonzero()[:, 1]#将独热编码转换为类别编号
 
     if remove_self_loop:
         num_nodes = data["label"].shape[0]
@@ -146,16 +147,16 @@ def load_acm(remove_self_loop):
 
     # Adjacency matrices for meta path based neighbors
     # (Mufei): I verified both of them are binary adjacency matrices with self loops
-    author_g = dgl.from_scipy(data["PAP"])
-    subject_g = dgl.from_scipy(data["PLP"])
-    gs = [author_g, subject_g]
+    author_g = dgl.from_scipy(data["PAP"])#定义paper-auto-paper的meta-path;建立dgl格式的graph
+    subject_g = dgl.from_scipy(data["PLP"])#定义PLP的meta-path;
+    gs = [author_g, subject_g]#组合2个meta-path形成的图
 
     train_idx = torch.from_numpy(data["train_idx"]).long().squeeze(0)
     val_idx = torch.from_numpy(data["val_idx"]).long().squeeze(0)
     test_idx = torch.from_numpy(data["test_idx"]).long().squeeze(0)
 
-    num_nodes = author_g.number_of_nodes()
-    train_mask = get_binary_mask(num_nodes, train_idx)
+    num_nodes = author_g.number_of_nodes()#所有节点数量：包含训练集、验证集、测试集
+    train_mask = get_binary_mask(num_nodes, train_idx)#将训练集对应位置设为1，其余位置设为0
     val_mask = get_binary_mask(num_nodes, val_idx)
     test_mask = get_binary_mask(num_nodes, test_idx)
 
@@ -170,10 +171,10 @@ def load_acm(remove_self_loop):
     )
 
     return (
-        gs,
-        features,
+        gs,#PAP和PLP下的图
+        features,#节点特征
         labels,
-        num_classes,
+        num_classes,#节点类别数量
         train_idx,
         val_idx,
         test_idx,

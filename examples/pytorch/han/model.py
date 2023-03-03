@@ -17,8 +17,8 @@ class SemanticAttention(nn.Module):
 
     def forward(self, z):
         w = self.project(z).mean(0)  # (M, 1)
-        beta = torch.softmax(w, dim=0)  # (M, 1)
-        beta = beta.expand((z.shape[0],) + beta.shape)  # (N, M, 1)
+        beta = torch.softmax(w, dim=0)  # (M, 1) 归一化
+        beta = beta.expand((z.shape[0],) + beta.shape)  # 拓展到N个节点上(N, M, 1)
 
         return (beta * z).sum(1)  # (N, D * K)
 
@@ -66,7 +66,7 @@ class HANLayer(nn.Module):
                     activation=F.elu,
                 )
             )
-        self.semantic_attention = SemanticAttention(
+        self.semantic_attention = SemanticAttention(#语义attention
             in_size=out_size * layer_num_heads
         )
         self.num_meta_paths = num_meta_paths
@@ -95,7 +95,7 @@ class HAN(nn.Module):
                 num_meta_paths, in_size, hidden_size, num_heads[0], dropout
             )
         )
-        for l in range(1, len(num_heads)):
+        for l in range(1, len(num_heads)):#多层多头，目前只有1层异构图
             self.layers.append(
                 HANLayer(
                     num_meta_paths,
@@ -109,6 +109,6 @@ class HAN(nn.Module):
 
     def forward(self, g, h):
         for gnn in self.layers:
-            h = gnn(g, h)
+            h = gnn(g, h)#HANLayer
 
         return self.predict(h)
