@@ -52,7 +52,7 @@ def main(args):
     val_mask = val_mask.to(args["device"])
     test_mask = test_mask.to(args["device"])
 
-    if args["hetero"]:
+    if args["hetero"]:#自己构建异构图的邻接矩阵
         from model_hetero import HAN
 
         model = HAN(
@@ -64,7 +64,7 @@ def main(args):
             dropout=args["dropout"],
         ).to(args["device"])
         g = g.to(args["device"])
-    else:
+    else:#现在数据集中已经够建好了异构图的2个邻接矩阵
         from model import HAN
 
         model = HAN(
@@ -86,7 +86,7 @@ def main(args):
     for epoch in range(args["num_epochs"]):
         model.train()
         logits = model(g, features)
-        loss = loss_fcn(logits[train_mask], labels[train_mask])
+        loss = loss_fcn(logits[train_mask], labels[train_mask])#只计算train_mask的损失
 
         optimizer.zero_grad()
         loss.backward()
