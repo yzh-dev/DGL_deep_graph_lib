@@ -9,6 +9,7 @@ import pytest
 import torch as th
 from dgl import function as fn
 from dgl.distributed import (
+    convert_dgl_partition_to_csc_sampling_graph,
     load_partition,
     load_partition_book,
     load_partition_feats,
@@ -98,18 +99,18 @@ def verify_hetero_graph(g, parts):
     for ntype in g.ntypes:
         print(
             "node {}: {}, {}".format(
-                ntype, g.number_of_nodes(ntype), num_nodes[ntype]
+                ntype, g.num_nodes(ntype), num_nodes[ntype]
             )
         )
-        assert g.number_of_nodes(ntype) == num_nodes[ntype]
+        assert g.num_nodes(ntype) == num_nodes[ntype]
     # Verify the number of edges are correct.
     for etype in g.canonical_etypes:
         print(
             "edge {}: {}, {}".format(
-                etype, g.number_of_edges(etype), num_edges[etype]
+                etype, g.num_edges(etype), num_edges[etype]
             )
         )
-        assert g.number_of_edges(etype) == num_edges[etype]
+        assert g.num_edges(etype) == num_edges[etype]
 
     nids = {ntype: [] for ntype in g.ntypes}
     eids = {etype: [] for etype in g.canonical_etypes}
@@ -149,11 +150,11 @@ def verify_hetero_graph(g, parts):
         nids_type = F.cat(nids[ntype], 0)
         uniq_ids = F.unique(nids_type)
         # We should get all nodes.
-        assert len(uniq_ids) == g.number_of_nodes(ntype)
+        assert len(uniq_ids) == g.num_nodes(ntype)
     for etype in eids:
         eids_type = F.cat(eids[etype], 0)
         uniq_ids = F.unique(eids_type)
-        assert len(uniq_ids) == g.number_of_edges(etype)
+        assert len(uniq_ids) == g.num_edges(etype)
     # TODO(zhengda) this doesn't check 'part_id'
 
 
@@ -235,9 +236,9 @@ def check_hetero_partition(
     assert len(orig_nids) == len(hg.ntypes)
     assert len(orig_eids) == len(hg.canonical_etypes)
     for ntype in hg.ntypes:
-        assert len(orig_nids[ntype]) == hg.number_of_nodes(ntype)
+        assert len(orig_nids[ntype]) == hg.num_nodes(ntype)
     for etype in hg.canonical_etypes:
-        assert len(orig_eids[etype]) == hg.number_of_edges(etype)
+        assert len(orig_eids[etype]) == hg.num_edges(etype)
     parts = []
     shuffled_labels = []
     shuffled_elabels = []
@@ -334,13 +335,9 @@ def check_partition(
     load_feats=True,
     graph_formats=None,
 ):
-    g.ndata["labels"] = F.arange(0, g.number_of_nodes())
-    g.ndata["feats"] = F.tensor(
-        np.random.randn(g.number_of_nodes(), 10), F.float32
-    )
-    g.edata["feats"] = F.tensor(
-        np.random.randn(g.number_of_edges(), 10), F.float32
-    )
+    g.ndata["labels"] = F.arange(0, g.num_nodes())
+    g.ndata["feats"] = F.tensor(np.random.randn(g.num_nodes(), 10), F.float32)
+    g.edata["feats"] = F.tensor(np.random.randn(g.num_edges(), 10), F.float32)
     g.update_all(fn.copy_u("feats", "msg"), fn.sum("msg", "h"))
     g.update_all(fn.copy_e("feats", "msg"), fn.sum("msg", "eh"))
     num_hops = 2
@@ -389,8 +386,8 @@ def check_partition(
                 assert np.all(F.asnumpy(part_ids) == i)
 
         # Check the metadata
-        assert gpb._num_nodes() == g.number_of_nodes()
-        assert gpb._num_edges() == g.number_of_edges()
+        assert gpb._num_nodes() == g.num_nodes()
+        assert gpb._num_edges() == g.num_edges()
 
         assert gpb.num_partitions() == num_parts
         gpb_meta = gpb.metadata()
@@ -608,13 +605,13 @@ def test_RangePartitionBook():
     expect_except = False
     try:
         gpb.to_canonical_etype(("node1", "edge2", "node2"))
-    except:
+    except BaseException:
         expect_except = True
     assert expect_except
     expect_except = False
     try:
         gpb.to_canonical_etype("edge2")
-    except:
+    except BaseException:
         expect_except = True
     assert expect_except
 
@@ -649,7 +646,7 @@ def test_RangePartitionBook():
     expect_except = False
     try:
         HeteroDataName(False, "edge1", "feat")
-    except:
+    except BaseException:
         expect_except = True
     assert expect_except
     data_name = HeteroDataName(False, c_etype, "feat")
@@ -678,3 +675,175 @@ def test_UnknownPartitionBook():
         except Exception as e:
             if not isinstance(e, TypeError):
                 raise e
+
+
+@pytest.mark.parametrize("part_method", ["metis", "random"])
+@pytest.mark.parametrize("num_parts", [1, 4])
+def test_convert_dgl_partition_to_csc_sampling_graph_homo(
+    part_method, num_parts
+):
+    with tempfile.TemporaryDirectory() as test_dir:
+        g = create_random_graph(1000)
+        graph_name = "test"
+        partition_graph(
+            g, graph_name, num_parts, test_dir, part_method=part_method
+        )
+        part_config = os.path.join(test_dir, f"{graph_name}.json")
+        convert_dgl_partition_to_csc_sampling_graph(part_config)
+        for part_id in range(num_parts):
+            orig_g = dgl.load_graphs(
+                os.path.join(test_dir, f"part{part_id}/graph.dgl")
+            )[0][0]
+            new_g = dgl.graphbolt.load_csc_sampling_graph(
+                os.path.join(test_dir, f"part{part_id}/csc_sampling_graph.tar")
+            )
+            orig_indptr, orig_indices, _ = orig_g.adj().csc()
+            assert th.equal(orig_indptr, new_g.csc_indptr)
+            assert th.equal(orig_indices, new_g.indices)
+            assert new_g.node_type_offset is None
+            assert all(new_g.type_per_edge == 0)
+            for node_type, type_id in new_g.metadata.node_type_to_id.items():
+                assert g.get_ntype_id(node_type) == type_id
+            for edge_type, type_id in new_g.metadata.edge_type_to_id.items():
+                assert g.get_etype_id(edge_type) == type_id
+
+
+@pytest.mark.parametrize("part_method", ["metis", "random"])
+@pytest.mark.parametrize("num_parts", [1, 4])
+def test_convert_dgl_partition_to_csc_sampling_graph_hetero(
+    part_method, num_parts
+):
+    with tempfile.TemporaryDirectory() as test_dir:
+        g = create_random_hetero()
+        graph_name = "test"
+        partition_graph(
+            g, graph_name, num_parts, test_dir, part_method=part_method
+        )
+        part_config = os.path.join(test_dir, f"{graph_name}.json")
+        convert_dgl_partition_to_csc_sampling_graph(part_config)
+        for part_id in range(num_parts):
+            orig_g = dgl.load_graphs(
+                os.path.join(test_dir, f"part{part_id}/graph.dgl")
+            )[0][0]
+            new_g = dgl.graphbolt.load_csc_sampling_graph(
+                os.path.join(test_dir, f"part{part_id}/csc_sampling_graph.tar")
+            )
+            orig_indptr, orig_indices, _ = orig_g.adj().csc()
+            assert th.equal(orig_indptr, new_g.csc_indptr)
+            assert th.equal(orig_indices, new_g.indices)
+            for node_type, type_id in new_g.metadata.node_type_to_id.items():
+                assert g.get_ntype_id(node_type) == type_id
+            for edge_type, type_id in new_g.metadata.edge_type_to_id.items():
+                assert g.get_etype_id(edge_type) == type_id
+            assert new_g.node_type_offset is None
+            assert th.equal(orig_g.edata[dgl.ETYPE], new_g.type_per_edge)
+
+
+def test_not_sorted_node_edge_map():
+    # Partition configure file which includes not sorted node/edge map.
+    part_config_str = """
+{
+    "edge_map": {
+        "item:likes-rev:user": [
+            [
+                0,
+                100
+            ],
+            [
+                1000,
+                1500
+            ]
+        ],
+        "user:follows-rev:user": [
+            [
+                300,
+                600
+            ],
+            [
+                2100,
+                2800
+            ]
+        ],
+        "user:follows:user": [
+            [
+                100,
+                300
+            ],
+            [
+                1500,
+                2100
+            ]
+        ],
+        "user:likes:item": [
+            [
+                600,
+                1000
+            ],
+            [
+                2800,
+                3600
+            ]
+        ]
+    },
+    "etypes": {
+        "item:likes-rev:user": 0,
+        "user:follows-rev:user": 2,
+        "user:follows:user": 1,
+        "user:likes:item": 3
+    },
+    "graph_name": "test_graph",
+    "halo_hops": 1,
+    "node_map": {
+        "user": [
+            [
+                100,
+                300
+            ],
+            [
+                600,
+                1000
+            ]
+        ],
+        "item": [
+            [
+                0,
+                100
+            ],
+            [
+                300,
+                600
+            ]
+        ]
+    },
+    "ntypes": {
+        "user": 1,
+        "item": 0
+    },
+    "num_edges": 3600,
+    "num_nodes": 1000,
+    "num_parts": 2,
+    "part-0": {
+        "edge_feats": "part0/edge_feat.dgl",
+        "node_feats": "part0/node_feat.dgl",
+        "part_graph": "part0/graph.dgl"
+    },
+    "part-1": {
+        "edge_feats": "part1/edge_feat.dgl",
+        "node_feats": "part1/node_feat.dgl",
+        "part_graph": "part1/graph.dgl"
+    },
+    "part_method": "metis"
+}
+    """
+    with tempfile.TemporaryDirectory() as test_dir:
+        part_config = os.path.join(test_dir, "test_graph.json")
+        with open(part_config, "w") as file:
+            file.write(part_config_str)
+        # Part 0.
+        gpb, _, _, _ = load_partition_book(part_config, 0)
+        assert gpb.local_ntype_offset == [0, 100, 300]
+        assert gpb.local_etype_offset == [0, 100, 300, 600, 1000]
+        # Patr 1.
+        gpb, _, _, _ = load_partition_book(part_config, 1)
+        assert gpb.local_ntype_offset == [0, 300, 700]
+        assert gpb.local_etype_offset == [0, 500, 1100, 1800, 2600]

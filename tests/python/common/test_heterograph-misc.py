@@ -67,8 +67,8 @@ def gen_from_data(data, readonly, sort):
 
 def test_query():
     def _test_one(g):
-        assert g.number_of_nodes() == 10
-        assert g.number_of_edges() == 20
+        assert g.num_nodes() == 10
+        assert g.num_edges() == 20
 
         for i in range(10):
             assert g.has_nodes(i)
@@ -144,11 +144,11 @@ def test_query():
         assert F.allclose(g.out_degrees([8, 9]), F.tensor([0, 1]))
 
         assert np.array_equal(
-            F.sparse_to_numpy(g.adjacency_matrix(transpose=True)),
+            F.sparse_to_numpy(g.adj_external(transpose=True)),
             scipy_coo_input().toarray().T,
         )
         assert np.array_equal(
-            F.sparse_to_numpy(g.adjacency_matrix(transpose=False)),
+            F.sparse_to_numpy(g.adj_external(transpose=False)),
             scipy_coo_input().toarray(),
         )
 
@@ -158,8 +158,8 @@ def test_query():
         _test_one(g)
 
     def _test_csr_one(g):
-        assert g.number_of_nodes() == 10
-        assert g.number_of_edges() == 20
+        assert g.num_nodes() == 10
+        assert g.num_edges() == 20
 
         for i in range(10):
             assert g.has_nodes(i)
@@ -245,11 +245,11 @@ def test_query():
         assert F.allclose(g.out_degrees([8, 9]), F.tensor([0, 1]))
 
         assert np.array_equal(
-            F.sparse_to_numpy(g.adjacency_matrix(transpose=True)),
+            F.sparse_to_numpy(g.adj_external(transpose=True)),
             scipy_coo_input().toarray().T,
         )
         assert np.array_equal(
-            F.sparse_to_numpy(g.adjacency_matrix(transpose=False)),
+            F.sparse_to_numpy(g.adj_external(transpose=False)),
             scipy_coo_input().toarray(),
         )
 
@@ -308,12 +308,12 @@ def test_scipy_adjmat():
     g.add_nodes(10)
     g.add_edges(range(9), range(1, 10))
 
-    adj_0 = g.adj(scipy_fmt="csr")
-    adj_1 = g.adj(scipy_fmt="coo")
+    adj_0 = g.adj_external(scipy_fmt="csr")
+    adj_1 = g.adj_external(scipy_fmt="coo")
     assert np.array_equal(adj_0.toarray(), adj_1.toarray())
 
-    adj_t0 = g.adj(transpose=False, scipy_fmt="csr")
-    adj_t_1 = g.adj(transpose=False, scipy_fmt="coo")
+    adj_t0 = g.adj_external(transpose=False, scipy_fmt="csr")
+    adj_t_1 = g.adj_external(transpose=False, scipy_fmt="coo")
     assert np.array_equal(adj_0.toarray(), adj_1.toarray())
 
 
@@ -498,6 +498,41 @@ def test_formats():
         fail = False
     finally:
         assert not fail
+
+    # If the intersection of created formats and allowed formats is
+    # not empty, then retain the intersection.
+    # Case1: intersection is not empty and intersected is equal to
+    # created formats.
+    g = g.formats(["coo", "csr"])
+    g.create_formats_()
+    g = g.formats(["coo", "csr", "csc"])
+    assert sorted(g.formats()["created"]) == sorted(["coo", "csr"])
+    assert sorted(g.formats()["not created"]) == sorted(["csc"])
+
+    # Case2: intersection is not empty and intersected is not equal
+    # to created formats.
+    g = g.formats(["coo", "csr"])
+    g.create_formats_()
+    g = g.formats(["coo", "csc"])
+    assert sorted(g.formats()["created"]) == sorted(["coo"])
+    assert sorted(g.formats()["not created"]) == sorted(["csc"])
+
+    # If the intersection of created formats and allowed formats is
+    # empty, then create a format in the order of `coo` -> `csr` ->
+    # `csc`.
+    # Case1: intersection is empty and just one format is allowed.
+    g = g.formats(["coo", "csr"])
+    g.create_formats_()
+    g = g.formats(["csc"])
+    assert sorted(g.formats()["created"]) == sorted(["csc"])
+    assert sorted(g.formats()["not created"]) == sorted([])
+
+    # Case2: intersection is empty and more than one format is allowed.
+    g = g.formats("csc")
+    g.create_formats_()
+    g = g.formats(["csr", "coo"])
+    assert sorted(g.formats()["created"]) == sorted(["coo"])
+    assert sorted(g.formats()["not created"]) == sorted(["csr"])
 
 
 if __name__ == "__main__":

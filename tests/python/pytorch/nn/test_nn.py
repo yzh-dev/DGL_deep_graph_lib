@@ -12,15 +12,17 @@ import pytest
 import scipy as sp
 import torch
 import torch as th
-from test_utils import parametrize_idtype
-from test_utils.graph_cases import (
+from dgl import shortest_dist
+from torch.nn.utils.rnn import pad_sequence
+from torch.optim import Adam, SparseAdam
+from torch.utils.data import DataLoader
+from utils import parametrize_idtype
+from utils.graph_cases import (
     get_cases,
     random_bipartite,
     random_dglgraph,
     random_graph,
 )
-from torch.optim import Adam, SparseAdam
-from torch.utils.data import DataLoader
 
 tmp_buffer = io.BytesIO()
 
@@ -35,7 +37,7 @@ def _AXWb(A, X, W, b):
 def test_graph_conv0(out_dim):
     g = dgl.DGLGraph(nx.path_graph(3)).to(F.ctx())
     ctx = F.ctx()
-    adj = g.adjacency_matrix(transpose=True, ctx=ctx)
+    adj = g.adj_external(transpose=True, ctx=ctx)
 
     conv = nn.GraphConv(5, out_dim, norm="none", bias=True)
     conv = conv.to(ctx)
@@ -220,7 +222,7 @@ def test_tagconv(out_dim):
     g = dgl.DGLGraph(nx.path_graph(3))
     g = g.to(F.ctx())
     ctx = F.ctx()
-    adj = g.adjacency_matrix(transpose=True, ctx=ctx)
+    adj = g.adj_external(transpose=True, ctx=ctx)
     norm = th.pow(g.in_degrees().float(), -0.5)
 
     conv = nn.TAGConv(5, out_dim, bias=True)
@@ -267,7 +269,7 @@ def test_set2set():
     print(s2s)
 
     # test#1: basic
-    h0 = F.randn((g.number_of_nodes(), 5))
+    h0 = F.randn((g.num_nodes(), 5))
     h1 = s2s(g, h0)
     assert h1.shape[0] == 1 and h1.shape[1] == 10 and h1.dim() == 2
 
@@ -275,7 +277,7 @@ def test_set2set():
     g1 = dgl.DGLGraph(nx.path_graph(11)).to(F.ctx())
     g2 = dgl.DGLGraph(nx.path_graph(5)).to(F.ctx())
     bg = dgl.batch([g, g1, g2])
-    h0 = F.randn((bg.number_of_nodes(), 5))
+    h0 = F.randn((bg.num_nodes(), 5))
     h1 = s2s(bg, h0)
     assert h1.shape[0] == 3 and h1.shape[1] == 10 and h1.dim() == 2
 
@@ -293,13 +295,13 @@ def test_glob_att_pool():
     th.save(gap, tmp_buffer)
 
     # test#1: basic
-    h0 = F.randn((g.number_of_nodes(), 5))
+    h0 = F.randn((g.num_nodes(), 5))
     h1 = gap(g, h0)
     assert h1.shape[0] == 1 and h1.shape[1] == 10 and h1.dim() == 2
 
     # test#2: batched graph
     bg = dgl.batch([g, g, g, g])
-    h0 = F.randn((bg.number_of_nodes(), 5))
+    h0 = F.randn((bg.num_nodes(), 5))
     h1 = gap(bg, h0)
     assert h1.shape[0] == 4 and h1.shape[1] == 10 and h1.dim() == 2
 
@@ -316,7 +318,7 @@ def test_simple_pool():
     print(sum_pool, avg_pool, max_pool, sort_pool)
 
     # test#1: basic
-    h0 = F.randn((g.number_of_nodes(), 5))
+    h0 = F.randn((g.num_nodes(), 5))
     sum_pool = sum_pool.to(ctx)
     avg_pool = avg_pool.to(ctx)
     max_pool = max_pool.to(ctx)
@@ -333,7 +335,7 @@ def test_simple_pool():
     # test#2: batched graph
     g_ = dgl.DGLGraph(nx.path_graph(5)).to(F.ctx())
     bg = dgl.batch([g, g_, g, g_, g])
-    h0 = F.randn((bg.number_of_nodes(), 5))
+    h0 = F.randn((bg.num_nodes(), 5))
     h1 = sum_pool(bg, h0)
     truth = th.stack(
         [
@@ -390,7 +392,7 @@ def test_set_trans():
     print(st_enc_0, st_enc_1, st_dec)
 
     # test#1: basic
-    h0 = F.randn((g.number_of_nodes(), 50))
+    h0 = F.randn((g.num_nodes(), 50))
     h1 = st_enc_0(g, h0)
     assert h1.shape == h0.shape
     h1 = st_enc_1(g, h0)
@@ -402,7 +404,7 @@ def test_set_trans():
     g1 = dgl.DGLGraph(nx.path_graph(5))
     g2 = dgl.DGLGraph(nx.path_graph(10))
     bg = dgl.batch([g, g1, g2])
-    h0 = F.randn((bg.number_of_nodes(), 50))
+    h0 = F.randn((bg.num_nodes(), 50))
     h1 = st_enc_0(bg, h0)
     assert h1.shape == h0.shape
     h1 = st_enc_1(bg, h0)
@@ -421,14 +423,14 @@ def test_rgcn(idtype, O):
     g = g.astype(idtype).to(F.ctx())
     # 5 etypes
     R = 5
-    for i in range(g.number_of_edges()):
+    for i in range(g.num_edges()):
         etype.append(i % 5)
     B = 2
     I = 10
 
     h = th.randn((100, I)).to(ctx)
     r = th.tensor(etype).to(ctx)
-    norm = th.rand((g.number_of_edges(), 1)).to(ctx)
+    norm = th.rand((g.num_edges(), 1)).to(ctx)
     sorted_r, idx = th.sort(r)
     sorted_g = dgl.reorder_graph(
         g,
@@ -482,13 +484,13 @@ def test_rgcn_default_nbasis(idtype, O):
     g = g.astype(idtype).to(F.ctx())
     # 5 etypes
     R = 5
-    for i in range(g.number_of_edges()):
+    for i in range(g.num_edges()):
         etype.append(i % 5)
     I = 10
 
     h = th.randn((100, I)).to(ctx)
     r = th.tensor(etype).to(ctx)
-    norm = th.rand((g.number_of_edges(), 1)).to(ctx)
+    norm = th.rand((g.num_edges(), 1)).to(ctx)
     sorted_r, idx = th.sort(r)
     sorted_g = dgl.reorder_graph(
         g,
@@ -540,8 +542,8 @@ def test_rgcn_default_nbasis(idtype, O):
 @pytest.mark.parametrize("out_dim", [1, 5])
 @pytest.mark.parametrize("num_heads", [1, 4])
 def test_gat_conv(g, idtype, out_dim, num_heads):
-    g = g.astype(idtype).to(F.ctx())
     ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
     gat = nn.GATConv(5, out_dim, num_heads)
     feat = F.randn((g.number_of_src_nodes(), 5))
     gat = gat.to(ctx)
@@ -552,7 +554,7 @@ def test_gat_conv(g, idtype, out_dim, num_heads):
 
     assert h.shape == (g.number_of_dst_nodes(), num_heads, out_dim)
     _, a = gat(g, feat, get_attention=True)
-    assert a.shape == (g.number_of_edges(), num_heads, 1)
+    assert a.shape == (g.num_edges(), num_heads, 1)
 
     # test residual connection
     gat = nn.GATConv(5, out_dim, num_heads, residual=True)
@@ -565,8 +567,8 @@ def test_gat_conv(g, idtype, out_dim, num_heads):
 @pytest.mark.parametrize("out_dim", [1, 2])
 @pytest.mark.parametrize("num_heads", [1, 4])
 def test_gat_conv_bi(g, idtype, out_dim, num_heads):
-    g = g.astype(idtype).to(F.ctx())
     ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
     gat = nn.GATConv(5, out_dim, num_heads)
     feat = (
         F.randn((g.number_of_src_nodes(), 5)),
@@ -576,7 +578,28 @@ def test_gat_conv_bi(g, idtype, out_dim, num_heads):
     h = gat(g, feat)
     assert h.shape == (g.number_of_dst_nodes(), num_heads, out_dim)
     _, a = gat(g, feat, get_attention=True)
-    assert a.shape == (g.number_of_edges(), num_heads, 1)
+    assert a.shape == (g.num_edges(), num_heads, 1)
+
+
+@parametrize_idtype
+@pytest.mark.parametrize("g", get_cases(["bipartite"], exclude=["zero-degree"]))
+@pytest.mark.parametrize("out_dim", [1, 2])
+@pytest.mark.parametrize("num_heads", [1, 4])
+def test_gat_conv_edge_weight(g, idtype, out_dim, num_heads):
+    ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
+    gat = nn.GATConv(5, out_dim, num_heads)
+    feat = (
+        F.randn((g.number_of_src_nodes(), 5)),
+        F.randn((g.number_of_dst_nodes(), 5)),
+    )
+    gat = gat.to(ctx)
+    ew = F.randn((g.num_edges(),))
+    h = gat(g, feat, edge_weight=ew)
+    assert h.shape == (g.number_of_dst_nodes(), num_heads, out_dim)
+    _, a = gat(g, feat, get_attention=True)
+    assert a.shape[0] == ew.shape[0]
+    assert a.shape == (g.num_edges(), num_heads, 1)
 
 
 @parametrize_idtype
@@ -598,7 +621,7 @@ def test_gatv2_conv(g, idtype, out_dim, num_heads):
 
     assert h.shape == (g.number_of_dst_nodes(), num_heads, out_dim)
     _, a = gat(g, feat, get_attention=True)
-    assert a.shape == (g.number_of_edges(), num_heads, 1)
+    assert a.shape == (g.num_edges(), num_heads, 1)
 
     # test residual connection
     gat = nn.GATConv(5, out_dim, num_heads, residual=True)
@@ -622,7 +645,7 @@ def test_gatv2_conv_bi(g, idtype, out_dim, num_heads):
     h = gat(g, feat)
     assert h.shape == (g.number_of_dst_nodes(), num_heads, out_dim)
     _, a = gat(g, feat, get_attention=True)
-    assert a.shape == (g.number_of_edges(), num_heads, 1)
+    assert a.shape == (g.num_edges(), num_heads, 1)
 
 
 @parametrize_idtype
@@ -631,8 +654,8 @@ def test_gatv2_conv_bi(g, idtype, out_dim, num_heads):
 @pytest.mark.parametrize("out_edge_feats", [1, 5])
 @pytest.mark.parametrize("num_heads", [1, 4])
 def test_egat_conv(g, idtype, out_node_feats, out_edge_feats, num_heads):
-    g = g.astype(idtype).to(F.ctx())
     ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
     egat = nn.EGATConv(
         in_node_feats=10,
         in_edge_feats=5,
@@ -640,17 +663,17 @@ def test_egat_conv(g, idtype, out_node_feats, out_edge_feats, num_heads):
         out_edge_feats=out_edge_feats,
         num_heads=num_heads,
     )
-    nfeat = F.randn((g.number_of_nodes(), 10))
-    efeat = F.randn((g.number_of_edges(), 5))
+    nfeat = F.randn((g.num_nodes(), 10))
+    efeat = F.randn((g.num_edges(), 5))
     egat = egat.to(ctx)
     h, f = egat(g, nfeat, efeat)
 
     th.save(egat, tmp_buffer)
 
-    assert h.shape == (g.number_of_nodes(), num_heads, out_node_feats)
-    assert f.shape == (g.number_of_edges(), num_heads, out_edge_feats)
-    _, _, attn = egat(g, nfeat, efeat, True)
-    assert attn.shape == (g.number_of_edges(), num_heads, 1)
+    assert h.shape == (g.num_nodes(), num_heads, out_node_feats)
+    assert f.shape == (g.num_edges(), num_heads, out_edge_feats)
+    _, _, attn = egat(g, nfeat, efeat, get_attention=True)
+    assert attn.shape == (g.num_edges(), num_heads, 1)
 
 
 @parametrize_idtype
@@ -659,8 +682,8 @@ def test_egat_conv(g, idtype, out_node_feats, out_edge_feats, num_heads):
 @pytest.mark.parametrize("out_edge_feats", [1, 5])
 @pytest.mark.parametrize("num_heads", [1, 4])
 def test_egat_conv_bi(g, idtype, out_node_feats, out_edge_feats, num_heads):
-    g = g.astype(idtype).to(F.ctx())
     ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
     egat = nn.EGATConv(
         in_node_feats=(10, 15),
         in_edge_feats=7,
@@ -672,15 +695,94 @@ def test_egat_conv_bi(g, idtype, out_node_feats, out_edge_feats, num_heads):
         F.randn((g.number_of_src_nodes(), 10)),
         F.randn((g.number_of_dst_nodes(), 15)),
     )
-    efeat = F.randn((g.number_of_edges(), 7))
+    efeat = F.randn((g.num_edges(), 7))
     egat = egat.to(ctx)
     h, f = egat(g, nfeat, efeat)
 
     th.save(egat, tmp_buffer)
 
     assert h.shape == (g.number_of_dst_nodes(), num_heads, out_node_feats)
-    assert f.shape == (g.number_of_edges(), num_heads, out_edge_feats)
-    _, _, attn = egat(g, nfeat, efeat, True)
+    assert f.shape == (g.num_edges(), num_heads, out_edge_feats)
+    _, _, attn = egat(g, nfeat, efeat, get_attention=True)
+    assert attn.shape == (g.num_edges(), num_heads, 1)
+
+
+@parametrize_idtype
+@pytest.mark.parametrize("g", get_cases(["homo"], exclude=["zero-degree"]))
+@pytest.mark.parametrize("out_node_feats", [1, 5])
+@pytest.mark.parametrize("out_edge_feats", [1, 5])
+@pytest.mark.parametrize("num_heads", [1, 4])
+def test_egat_conv_edge_weight(
+    g, idtype, out_node_feats, out_edge_feats, num_heads
+):
+    ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
+    egat = nn.EGATConv(
+        in_node_feats=10,
+        in_edge_feats=5,
+        out_node_feats=out_node_feats,
+        out_edge_feats=out_edge_feats,
+        num_heads=num_heads,
+    )
+    egat = egat.to(ctx)
+    nfeat = F.randn((g.num_nodes(), 10))
+    efeat = F.randn((g.num_edges(), 5))
+    ew = F.randn((g.num_edges(),))
+
+    h, f, attn = egat(g, nfeat, efeat, edge_weight=ew, get_attention=True)
+
+    assert h.shape == (g.num_nodes(), num_heads, out_node_feats)
+    assert f.shape == (g.num_edges(), num_heads, out_edge_feats)
+    assert attn.shape == (g.num_edges(), num_heads, 1)
+
+
+@parametrize_idtype
+@pytest.mark.parametrize("g", get_cases(["homo"], exclude=["zero-degree"]))
+@pytest.mark.parametrize("out_feats", [1, 5])
+@pytest.mark.parametrize("num_heads", [1, 4])
+def test_edgegat_conv(g, idtype, out_feats, num_heads):
+    ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
+    edgegat = nn.EdgeGATConv(
+        in_feats=10, edge_feats=5, out_feats=out_feats, num_heads=num_heads
+    )
+    nfeat = F.randn((g.number_of_nodes(), 10))
+    efeat = F.randn((g.number_of_edges(), 5))
+    edgegat = edgegat.to(ctx)
+    h = edgegat(g, nfeat, efeat)
+
+    th.save(edgegat, tmp_buffer)
+
+    assert h.shape == (g.number_of_nodes(), num_heads, out_feats)
+    _, attn = edgegat(g, nfeat, efeat, True)
+    assert attn.shape == (g.number_of_edges(), num_heads, 1)
+
+
+@parametrize_idtype
+@pytest.mark.parametrize("g", get_cases(["bipartite"], exclude=["zero-degree"]))
+@pytest.mark.parametrize("out_feats", [1, 5])
+@pytest.mark.parametrize("num_heads", [1, 4])
+def test_edgegat_conv_bi(g, idtype, out_feats, num_heads):
+    ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
+    edgegat = nn.EdgeGATConv(
+        in_feats=(10, 15),
+        edge_feats=7,
+        out_feats=out_feats,
+        num_heads=num_heads,
+    )
+    nfeat = (
+        F.randn((g.number_of_src_nodes(), 10)),
+        F.randn((g.number_of_dst_nodes(), 15)),
+    )
+    efeat = F.randn((g.number_of_edges(), 7))
+    edgegat = edgegat.to(ctx)
+    h = edgegat(g, nfeat, efeat)
+
+    th.save(edgegat, tmp_buffer)
+
+    assert h.shape == (g.number_of_dst_nodes(), num_heads, out_feats)
+    _, attn = edgegat(g, nfeat, efeat, True)
     assert attn.shape == (g.number_of_edges(), num_heads, 1)
 
 
@@ -751,7 +853,7 @@ def test_sgc_conv(g, idtype, out_dim):
     # test pickle
     th.save(sgc, tmp_buffer)
 
-    feat = F.randn((g.number_of_nodes(), 5))
+    feat = F.randn((g.num_nodes(), 5))
     sgc = sgc.to(ctx)
 
     h = sgc(g, feat)
@@ -772,7 +874,7 @@ def test_appnp_conv(g, idtype):
     ctx = F.ctx()
     g = g.astype(idtype).to(ctx)
     appnp = nn.APPNPConv(10, 0.1)
-    feat = F.randn((g.number_of_nodes(), 5))
+    feat = F.randn((g.num_nodes(), 5))
     appnp = appnp.to(ctx)
 
     # test pickle
@@ -788,7 +890,7 @@ def test_appnp_conv_e_weight(g, idtype):
     ctx = F.ctx()
     g = g.astype(idtype).to(ctx)
     appnp = nn.APPNPConv(10, 0.1)
-    feat = F.randn((g.number_of_nodes(), 5))
+    feat = F.randn((g.num_nodes(), 5))
     eweight = F.ones((g.num_edges(),))
     appnp = appnp.to(ctx)
 
@@ -805,7 +907,7 @@ def test_gcn2conv_e_weight(g, idtype, bias):
     gcn2conv = nn.GCN2Conv(
         5, layer=2, alpha=0.5, bias=bias, project_initial_features=True
     )
-    feat = F.randn((g.number_of_nodes(), 5))
+    feat = F.randn((g.num_nodes(), 5))
     eweight = F.ones((g.num_edges(),))
     gcn2conv = gcn2conv.to(ctx)
     res = feat
@@ -819,7 +921,7 @@ def test_sgconv_e_weight(g, idtype):
     ctx = F.ctx()
     g = g.astype(idtype).to(ctx)
     sgconv = nn.SGConv(5, 5, 3)
-    feat = F.randn((g.number_of_nodes(), 5))
+    feat = F.randn((g.num_nodes(), 5))
     eweight = F.ones((g.num_edges(),))
     sgconv = sgconv.to(ctx)
     h = sgconv(g, feat, edge_weight=eweight)
@@ -833,7 +935,7 @@ def test_tagconv_e_weight(g, idtype):
     g = g.astype(idtype).to(ctx)
     conv = nn.TAGConv(5, 5, bias=True)
     conv = conv.to(ctx)
-    feat = F.randn((g.number_of_nodes(), 5))
+    feat = F.randn((g.num_nodes(), 5))
     eweight = F.ones((g.num_edges(),))
     conv = conv.to(ctx)
     h = conv(g, feat, edge_weight=eweight)
@@ -938,8 +1040,8 @@ def test_gated_graph_conv(g, idtype):
     ctx = F.ctx()
     g = g.astype(idtype).to(ctx)
     ggconv = nn.GatedGraphConv(5, 10, 5, 3)
-    etypes = th.arange(g.number_of_edges()) % 3
-    feat = F.randn((g.number_of_nodes(), 5))
+    etypes = th.arange(g.num_edges()) % 3
+    feat = F.randn((g.num_nodes(), 5))
     ggconv = ggconv.to(ctx)
     etypes = etypes.to(ctx)
 
@@ -954,8 +1056,8 @@ def test_gated_graph_conv_one_etype(g, idtype):
     ctx = F.ctx()
     g = g.astype(idtype).to(ctx)
     ggconv = nn.GatedGraphConv(5, 10, 5, 1)
-    etypes = th.zeros(g.number_of_edges())
-    feat = F.randn((g.number_of_nodes(), 5))
+    etypes = th.zeros(g.num_edges())
+    feat = F.randn((g.num_nodes(), 5))
     ggconv = ggconv.to(ctx)
     etypes = etypes.to(ctx)
 
@@ -976,7 +1078,7 @@ def test_nn_conv(g, idtype):
     edge_func = th.nn.Linear(4, 5 * 10)
     nnconv = nn.NNConv(5, 10, edge_func, "mean")
     feat = F.randn((g.number_of_src_nodes(), 5))
-    efeat = F.randn((g.number_of_edges(), 4))
+    efeat = F.randn((g.num_edges(), 4))
     nnconv = nnconv.to(ctx)
     h = nnconv(g, feat, efeat)
     # currently we only do shape check
@@ -992,7 +1094,7 @@ def test_nn_conv_bi(g, idtype):
     nnconv = nn.NNConv((5, 2), 10, edge_func, "mean")
     feat = F.randn((g.number_of_src_nodes(), 5))
     feat_dst = F.randn((g.number_of_dst_nodes(), 2))
-    efeat = F.randn((g.number_of_edges(), 4))
+    efeat = F.randn((g.num_edges(), 4))
     nnconv = nnconv.to(ctx)
     h = nnconv(g, (feat, feat_dst), efeat)
     # currently we only do shape check
@@ -1005,8 +1107,8 @@ def test_gmm_conv(g, idtype):
     g = g.astype(idtype).to(F.ctx())
     ctx = F.ctx()
     gmmconv = nn.GMMConv(5, 10, 3, 4, "mean")
-    feat = F.randn((g.number_of_nodes(), 5))
-    pseudo = F.randn((g.number_of_edges(), 3))
+    feat = F.randn((g.num_nodes(), 5))
+    pseudo = F.randn((g.num_edges(), 3))
     gmmconv = gmmconv.to(ctx)
     h = gmmconv(g, feat, pseudo)
     # currently we only do shape check
@@ -1023,7 +1125,7 @@ def test_gmm_conv_bi(g, idtype):
     gmmconv = nn.GMMConv((5, 2), 10, 3, 4, "mean")
     feat = F.randn((g.number_of_src_nodes(), 5))
     feat_dst = F.randn((g.number_of_dst_nodes(), 2))
-    pseudo = F.randn((g.number_of_edges(), 3))
+    pseudo = F.randn((g.num_edges(), 3))
     gmmconv = gmmconv.to(ctx)
     h = gmmconv(g, (feat, feat_dst), pseudo)
     # currently we only do shape check
@@ -1040,7 +1142,7 @@ def test_dense_graph_conv(norm_type, g, idtype, out_dim):
     g = g.astype(idtype).to(F.ctx())
     ctx = F.ctx()
     # TODO(minjie): enable the following option after #1385
-    adj = g.adjacency_matrix(transpose=True, ctx=ctx).to_dense()
+    adj = g.adj_external(transpose=True, ctx=ctx).to_dense()
     conv = nn.GraphConv(5, out_dim, norm=norm_type, bias=True)
     dense_conv = nn.DenseGraphConv(5, out_dim, norm=norm_type, bias=True)
     dense_conv.weight.data = conv.weight.data
@@ -1059,7 +1161,7 @@ def test_dense_graph_conv(norm_type, g, idtype, out_dim):
 def test_dense_sage_conv(g, idtype, out_dim):
     g = g.astype(idtype).to(F.ctx())
     ctx = F.ctx()
-    adj = g.adjacency_matrix(transpose=True, ctx=ctx).to_dense()
+    adj = g.adj_external(transpose=True, ctx=ctx).to_dense()
     sage = nn.SAGEConv(5, out_dim, "gcn")
     dense_sage = nn.DenseSAGEConv(5, out_dim)
     dense_sage.fc.weight.data = sage.fc_neigh.weight.data
@@ -1070,7 +1172,7 @@ def test_dense_sage_conv(g, idtype, out_dim):
             F.randn((g.number_of_dst_nodes(), 5)),
         )
     else:
-        feat = F.randn((g.number_of_nodes(), 5))
+        feat = F.randn((g.num_nodes(), 5))
     sage = sage.to(ctx)
     dense_sage = dense_sage.to(ctx)
     out_sage = sage(g, feat)
@@ -1130,7 +1232,7 @@ def test_dotgat_conv(g, idtype, out_dim, num_heads):
     h = dotgat(g, feat)
     assert h.shape == (g.number_of_dst_nodes(), num_heads, out_dim)
     _, a = dotgat(g, feat, get_attention=True)
-    assert a.shape == (g.number_of_edges(), num_heads, 1)
+    assert a.shape == (g.num_edges(), num_heads, 1)
 
 
 @parametrize_idtype
@@ -1149,7 +1251,7 @@ def test_dotgat_conv_bi(g, idtype, out_dim, num_heads):
     h = dotgat(g, feat)
     assert h.shape == (g.number_of_dst_nodes(), num_heads, out_dim)
     _, a = dotgat(g, feat, get_attention=True)
-    assert a.shape == (g.number_of_edges(), num_heads, 1)
+    assert a.shape == (g.num_edges(), num_heads, 1)
 
 
 @pytest.mark.parametrize("out_dim", [1, 2])
@@ -1158,7 +1260,7 @@ def test_dense_cheb_conv(out_dim):
         ctx = F.ctx()
         g = dgl.DGLGraph(sp.sparse.random(100, 100, density=0.1), readonly=True)
         g = g.to(F.ctx())
-        adj = g.adjacency_matrix(transpose=True, ctx=ctx).to_dense()
+        adj = g.adj_external(transpose=True, ctx=ctx).to_dense()
         cheb = nn.ChebConv(5, out_dim, k, None)
         dense_cheb = nn.DenseChebConv(5, out_dim, k)
         # for i in range(len(cheb.fc)):
@@ -1216,7 +1318,7 @@ def test_sequential():
             graph.ndata["h"] = n_feat
             graph.update_all(fn.copy_u("h", "m"), fn.sum("m", "h"))
             n_feat += graph.ndata["h"]
-            return n_feat.view(graph.number_of_nodes() // 2, 2, -1).sum(1)
+            return n_feat.view(graph.num_nodes() // 2, 2, -1).sum(1)
 
     g1 = dgl.DGLGraph(nx.erdos_renyi_graph(32, 0.05)).to(F.ctx())
     g2 = dgl.DGLGraph(nx.erdos_renyi_graph(16, 0.2)).to(F.ctx())
@@ -1243,8 +1345,8 @@ def test_atomic_conv(g, idtype):
     if F.gpu_ctx():
         aconv = aconv.to(ctx)
 
-    feat = F.randn((g.number_of_nodes(), 1))
-    dist = F.randn((g.number_of_edges(), 1))
+    feat = F.randn((g.num_nodes(), 1))
+    dist = F.randn((g.num_edges(), 1))
 
     h = aconv(g, feat, dist)
 
@@ -1268,7 +1370,7 @@ def test_cf_conv(g, idtype, out_dim):
         cfconv = cfconv.to(ctx)
 
     src_feats = F.randn((g.number_of_src_nodes(), 2))
-    edge_feats = F.randn((g.number_of_edges(), 3))
+    edge_feats = F.randn((g.num_edges(), 3))
     h = cfconv(g, src_feats, edge_feats)
     # current we only do shape check
     assert h.shape[-1] == out_dim
@@ -1629,6 +1731,174 @@ def test_subgraphx(g, idtype, n_classes):
         model, num_hops=1, shapley_steps=20, num_rollouts=5, coef=2.0
     )
     explainer.explain_graph(g, feat, target_class=0)
+
+
+@pytest.mark.parametrize("g", get_cases(["hetero"], exclude=["zero-degree"]))
+@pytest.mark.parametrize("idtype", [F.int64])
+@pytest.mark.parametrize("input_dim", [5])
+@pytest.mark.parametrize("n_classes", [2])
+def test_heterosubgraphx(g, idtype, input_dim, n_classes):
+    ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
+    device = g.device
+
+    # add self-loop and reverse edges
+    transform1 = dgl.transforms.AddSelfLoop(new_etypes=True)
+    g = transform1(g)
+    transform2 = dgl.transforms.AddReverse(copy_edata=True)
+    g = transform2(g)
+
+    feat = {
+        ntype: th.zeros((g.num_nodes(ntype), input_dim), device=device)
+        for ntype in g.ntypes
+    }
+
+    class Model(th.nn.Module):
+        def __init__(self, in_dim, n_classes, canonical_etypes):
+            super(Model, self).__init__()
+            self.etype_weights = th.nn.ModuleDict(
+                {
+                    "_".join(c_etype): th.nn.Linear(in_dim, n_classes)
+                    for c_etype in canonical_etypes
+                }
+            )
+
+        def forward(self, graph, feat):
+            with graph.local_scope():
+                c_etype_func_dict = {}
+                for c_etype in graph.canonical_etypes:
+                    src_type, etype, dst_type = c_etype
+                    wh = self.etype_weights["_".join(c_etype)](feat[src_type])
+                    graph.nodes[src_type].data[f"h_{c_etype}"] = wh
+                    c_etype_func_dict[c_etype] = (
+                        fn.copy_u(f"h_{c_etype}", "m"),
+                        fn.mean("m", "h"),
+                    )
+                graph.multi_update_all(c_etype_func_dict, "sum")
+                hg = 0
+                for ntype in graph.ntypes:
+                    if graph.num_nodes(ntype):
+                        hg = hg + dgl.mean_nodes(graph, "h", ntype=ntype)
+
+                return hg
+
+    model = Model(input_dim, n_classes, g.canonical_etypes)
+    model = model.to(ctx)
+    explainer = nn.HeteroSubgraphX(
+        model, num_hops=1, shapley_steps=20, num_rollouts=5, coef=2.0
+    )
+    explainer.explain_graph(g, feat, target_class=0)
+
+
+@parametrize_idtype
+@pytest.mark.parametrize(
+    "g",
+    get_cases(
+        ["homo"],
+        exclude=[
+            "zero-degree",
+            "homo-zero-degree",
+            "has_feature",
+            "has_scalar_e_feature",
+            "row_sorted",
+            "col_sorted",
+        ],
+    ),
+)
+@pytest.mark.parametrize("n_classes", [2])
+def test_pgexplainer(g, idtype, n_classes):
+    ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
+    feat = F.randn((g.num_nodes(), 5))
+    g.ndata["attr"] = feat
+
+    # add reverse edges
+    transform = dgl.transforms.AddReverse(copy_edata=True)
+    g = transform(g)
+
+    class Model(th.nn.Module):
+        def __init__(self, in_feats, out_feats):
+            super(Model, self).__init__()
+            self.conv = nn.GraphConv(in_feats, out_feats)
+            self.fc = th.nn.Linear(out_feats, out_feats)
+            th.nn.init.xavier_uniform_(self.fc.weight)
+
+        def forward(self, g, h, embed=False, edge_weight=None):
+            h = self.conv(g, h, edge_weight=edge_weight)
+
+            if embed:
+                return h
+
+            with g.local_scope():
+                g.ndata["h"] = h
+                hg = dgl.mean_nodes(g, "h")
+                return self.fc(hg)
+
+    model = Model(feat.shape[1], n_classes)
+    model = model.to(ctx)
+
+    explainer = nn.PGExplainer(model, n_classes)
+    explainer.train_step(g, g.ndata["attr"], 5.0)
+
+    probs, edge_weight = explainer.explain_graph(g, feat)
+
+
+@pytest.mark.parametrize("g", get_cases(["hetero"]))
+@pytest.mark.parametrize("idtype", [F.int64])
+@pytest.mark.parametrize("input_dim", [5])
+@pytest.mark.parametrize("n_classes", [2])
+def test_heteropgexplainer(g, idtype, input_dim, n_classes):
+    ctx = F.ctx()
+    g = g.astype(idtype).to(ctx)
+    feat = {
+        ntype: F.randn((g.num_nodes(ntype), input_dim)) for ntype in g.ntypes
+    }
+
+    # add self-loop and reverse edges
+    transform1 = dgl.transforms.AddSelfLoop(new_etypes=True)
+    g = transform1(g)
+    transform2 = dgl.transforms.AddReverse(copy_edata=True)
+    g = transform2(g)
+
+    class Model(th.nn.Module):
+        def __init__(self, in_feats, embed_dim, out_feats, canonical_etypes):
+            super(Model, self).__init__()
+            self.conv = nn.HeteroGraphConv(
+                {
+                    c_etype: nn.GraphConv(in_feats, embed_dim)
+                    for c_etype in canonical_etypes
+                }
+            )
+            self.fc = th.nn.Linear(embed_dim, out_feats)
+
+        def forward(self, g, h, embed=False, edge_weight=None):
+            if edge_weight is not None:
+                mod_kwargs = {
+                    etype: {"edge_weight": mask}
+                    for etype, mask in edge_weight.items()
+                }
+                h = self.conv(g, h, mod_kwargs=mod_kwargs)
+            else:
+                h = self.conv(g, h)
+
+            if embed:
+                return h
+
+            with g.local_scope():
+                g.ndata["h"] = h
+                hg = 0
+                for ntype in g.ntypes:
+                    hg = hg + dgl.mean_nodes(g, "h", ntype=ntype)
+                return self.fc(hg)
+
+    embed_dim = input_dim
+    model = Model(input_dim, embed_dim, n_classes, g.canonical_etypes)
+    model = model.to(ctx)
+
+    explainer = nn.HeteroPGExplainer(model, embed_dim)
+    explainer.train_step(g, feat, 5.0)
+
+    probs, edge_weight = explainer.explain_graph(g, feat)
 
 
 def test_jumping_knowledge():
@@ -2121,31 +2391,32 @@ def test_DeepWalk():
 @pytest.mark.parametrize("embedding_dim", [8, 16])
 @pytest.mark.parametrize("direction", ["in", "out", "both"])
 def test_degree_encoder(max_degree, embedding_dim, direction):
-    g = dgl.graph(
+    g1 = dgl.graph(
         (
             th.tensor([0, 0, 0, 1, 1, 2, 3, 3]),
             th.tensor([1, 2, 3, 0, 3, 0, 0, 1]),
         )
     )
-    # test heterograph
-    hg = dgl.heterograph(
-        {
-            ("drug", "interacts", "drug"): (
-                th.tensor([0, 1]),
-                th.tensor([1, 2]),
-            ),
-            ("drug", "interacts", "gene"): (
-                th.tensor([0, 1]),
-                th.tensor([2, 3]),
-            ),
-            ("drug", "treats", "disease"): (th.tensor([1]), th.tensor([2])),
-        }
+    g2 = dgl.graph(
+        (
+            th.tensor([0, 1]),
+            th.tensor([1, 0]),
+        )
+    )
+    in_degree = pad_sequence(
+        [g1.in_degrees(), g2.in_degrees()], batch_first=True
+    )
+    out_degree = pad_sequence(
+        [g1.out_degrees(), g2.out_degrees()], batch_first=True
     )
     model = nn.DegreeEncoder(max_degree, embedding_dim, direction=direction)
-    de_g = model(g)
-    de_hg = model(hg)
-    assert de_g.shape == (4, embedding_dim)
-    assert de_hg.shape == (10, embedding_dim)
+    if direction == "in":
+        de_g = model(in_degree)
+    elif direction == "out":
+        de_g = model(out_degree)
+    elif direction == "both":
+        de_g = model(th.stack((in_degree, out_degree)))
+    assert de_g.shape == (2, 4, embedding_dim)
 
 
 @parametrize_idtype
@@ -2179,7 +2450,7 @@ def test_MetaPath2Vec(idtype):
 @pytest.mark.parametrize("n_head", [1, 4])
 @pytest.mark.parametrize("batch_norm", [True, False])
 @pytest.mark.parametrize("num_post_layer", [0, 1, 2])
-def test_LaplacianPosEnc(
+def test_LapPosEncoder(
     num_layer, k, lpe_dim, n_head, batch_norm, num_post_layer
 ):
     ctx = F.ctx()
@@ -2188,12 +2459,12 @@ def test_LaplacianPosEnc(
     EigVals = th.randn((num_nodes, k)).to(ctx)
     EigVecs = th.randn((num_nodes, k)).to(ctx)
 
-    model = nn.LaplacianPosEnc(
+    model = nn.LapPosEncoder(
         "Transformer", num_layer, k, lpe_dim, n_head, batch_norm, num_post_layer
     ).to(ctx)
     assert model(EigVals, EigVecs).shape == (num_nodes, lpe_dim)
 
-    model = nn.LaplacianPosEnc(
+    model = nn.LapPosEncoder(
         "DeepSet",
         num_layer,
         k,
@@ -2209,16 +2480,12 @@ def test_LaplacianPosEnc(
 @pytest.mark.parametrize("bias", [True, False])
 @pytest.mark.parametrize("attn_bias_type", ["add", "mul"])
 @pytest.mark.parametrize("attn_drop", [0.1, 0.5])
-def test_BiasedMultiheadAttention(
-    feat_size, num_heads, bias, attn_bias_type, attn_drop
-):
+def test_BiasedMHA(feat_size, num_heads, bias, attn_bias_type, attn_drop):
     ndata = th.rand(16, 100, feat_size)
     attn_bias = th.rand(16, 100, 100, num_heads)
     attn_mask = th.rand(16, 100, 100) < 0.5
 
-    net = nn.BiasedMultiheadAttention(
-        feat_size, num_heads, bias, attn_bias_type, attn_drop
-    )
+    net = nn.BiasedMHA(feat_size, num_heads, bias, attn_bias_type, attn_drop)
     out = net(ndata, attn_bias, attn_mask)
 
     assert out.shape == (16, 100, feat_size)
@@ -2242,6 +2509,7 @@ def test_GraphormerLayer(attn_bias_type, norm_first):
         attn_bias_type=attn_bias_type,
         norm_first=norm_first,
         dropout=0.1,
+        attn_dropout=0.1,
         activation=th.nn.ReLU(),
     )
     out = net(nfeat, attn_bias, attn_mask)
@@ -2249,25 +2517,24 @@ def test_GraphormerLayer(attn_bias_type, norm_first):
     assert out.shape == (batch_size, num_nodes, feat_size)
 
 
-@pytest.mark.parametrize("max_len", [1, 4])
+@pytest.mark.parametrize("max_len", [1, 2])
 @pytest.mark.parametrize("feat_dim", [16])
 @pytest.mark.parametrize("num_heads", [1, 8])
 def test_PathEncoder(max_len, feat_dim, num_heads):
     dev = F.ctx()
-    g1 = dgl.graph(
+    g = dgl.graph(
         (
             th.tensor([0, 0, 0, 1, 1, 2, 3, 3]),
             th.tensor([1, 2, 3, 0, 3, 0, 0, 1]),
         )
     ).to(dev)
-    g2 = dgl.graph(
-        (th.tensor([0, 1, 2, 3, 2, 5]), th.tensor([1, 2, 3, 4, 0, 3]))
-    ).to(dev)
-    bg = dgl.batch([g1, g2])
-    edge_feat = th.rand(bg.num_edges(), feat_dim).to(dev)
+    edge_feat = th.rand(g.num_edges(), feat_dim).to(dev)
+    edge_feat = th.cat((edge_feat, th.zeros(1, 16).to(dev)), dim=0)
+    dist, path = shortest_dist(g, root=None, return_paths=True)
+    path_data = edge_feat[path[:, :, :max_len]]
     model = nn.PathEncoder(max_len, feat_dim, num_heads=num_heads).to(dev)
-    bias = model(bg, edge_feat)
-    assert bias.shape == (2, 6, 6, num_heads)
+    bias = model(dist.unsqueeze(0), path_data.unsqueeze(0))
+    assert bias.shape == (1, 4, 4, num_heads)
 
 
 @pytest.mark.parametrize("max_dist", [1, 4])
@@ -2288,12 +2555,15 @@ def test_SpatialEncoder(max_dist, num_kernels, num_heads):
     ndata = th.rand(bg.num_nodes(), 3).to(dev)
     num_nodes = bg.num_nodes()
     node_type = th.randint(0, 512, (num_nodes,)).to(dev)
+    dist = -th.ones((2, 6, 6), dtype=th.long).to(dev)
+    dist[0, :4, :4] = shortest_dist(g1, root=None, return_paths=False)
+    dist[1, :6, :6] = shortest_dist(g2, root=None, return_paths=False)
     model_1 = nn.SpatialEncoder(max_dist, num_heads=num_heads).to(dev)
     model_2 = nn.SpatialEncoder3d(num_kernels, num_heads=num_heads).to(dev)
     model_3 = nn.SpatialEncoder3d(
         num_kernels, num_heads=num_heads, max_node_type=512
     ).to(dev)
-    encoding = model_1(bg)
+    encoding = model_1(dist)
     encoding3d_1 = model_2(bg, ndata)
     encoding3d_2 = model_3(bg, ndata, node_type)
     assert encoding.shape == (2, 6, 6, num_heads)

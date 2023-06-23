@@ -60,32 +60,51 @@ For Fedora/RHEL/CentOS users, run:
 
    sudo yum install -y gcc-c++ python3-devel make cmake
 
-Build the shared library. Use the configuration template ``cmake/config.cmake``.
-Copy it to either the project directory or the build directory and change the
-configuration as you wish. For example, change ``USE_CUDA`` to ``ON`` will
-enable a CUDA build. You could also pass ``-DKEY=VALUE`` to the cmake command
-for the same purpose.
+To create a Conda environment for CPU development, run:
 
-* CPU-only build::
+.. code:: bash
 
-     mkdir build
-     cd build
-     cmake ..
-     make -j4
+   bash script/create_dev_conda_env.sh -c
 
-* CUDA build::
+To create a Conda environment for GPU development, run:
 
-     mkdir build
-     cd build
-     cmake -DUSE_CUDA=ON ..
-     make -j4
+.. code:: bash
+
+   bash script/create_dev_conda_env.sh -g 11.7
+
+
+To further configure the conda environment, run the following command for more details:
+
+.. code:: bash
+
+   bash script/create_dev_conda_env.sh -h
+
+To build the shared library for CPU development, run:
+
+.. code:: bash
+
+   bash script/build_dgl.sh -c
+
+To build the shared library for GPU development, run:
+
+.. code:: bash
+
+   bash script/build_dgl.sh -g
+
+To further build the shared library, run the following command for more details:
+
+.. code:: bash
+
+   bash script/build_dgl.sh -h
 
 Finally, install the Python binding.
 
 .. code:: bash
 
-   cd ../python
+   cd python
    python setup.py install
+   # Build Cython extension
+   python setup.py build_ext --inplace
 
 macOS
 `````
@@ -115,10 +134,12 @@ install the Python binding for DGL.
 
    mkdir build
    cd build
-   cmake -DUSE_OPENMP=off -DCMAKE_C_FLAGS='-DXBYAK_DONT_USE_MAP_JIT' -DCMAKE_CXX_FLAGS='-DXBYAK_DONT_USE_MAP_JIT' -DUSE_AVX=OFF -DUSE_LIBXSMM=OFF ..
+   cmake -DUSE_OPENMP=off -DUSE_LIBXSMM=OFF ..
    make -j4
    cd ../python
    python setup.py install
+   # Build Cython extension
+   python setup.py build_ext --inplace
 
 Windows
 ```````
@@ -174,7 +195,7 @@ PyTorch backend
 ```````````````
 
 Export ``DGLBACKEND`` as ``pytorch`` to specify PyTorch backend. The required PyTorch
-version is 1.9.0 or later. See `pytorch.org <https://pytorch.org>`_ for installation instructions.
+version is 1.12.0 or later. See `pytorch.org <https://pytorch.org>`_ for installation instructions.
 
 MXNet backend
 `````````````

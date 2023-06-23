@@ -6,9 +6,8 @@ import numpy as np
 import pyarrow
 import torch
 from gloo_wrapper import allgather_sizes, alltoallv_cpu
-
 from pyarrow import csv
-from utils import map_partid_rank, memory_snapshot
+from utils import map_partid_rank
 
 
 class DistLookupService:
@@ -63,8 +62,9 @@ class DistLookupService:
 
         # Iterate over the node types and extract the partition id mappings.
         for ntype in ntype_names:
+
             filename = f"{ntype}.txt"
-            logging.info(
+            logging.debug(
                 f"[Rank: {rank}] Reading file: {os.path.join(input_dir, filename)}"
             )
 
@@ -109,7 +109,7 @@ class DistLookupService:
             # Explicitly release the array read from the file.
             del ntype_partids
 
-        logging.info(
+        logging.debug(
             f"[Rank: {rank}] ntypeid begin - {type_nid_begin} - {type_nid_end}"
         )
 
@@ -166,11 +166,18 @@ class DistLookupService:
             [local_rows], self.world_size, self.num_parts, return_sizes=True
         )
         max_count = np.amax(all_sizes)
+
+        if max_count <= 0:
+            logging.debug(
+                f"[Rank: {self.rank}] No process has global_nids to process !!!"
+            )
+            return
+
         num_splits = np.ceil(max_count / CHUNK_SIZE).astype(np.uint16)
         LOCAL_CHUNK_SIZE = np.ceil(local_rows / num_splits).astype(np.int64)
         agg_partition_ids = []
 
-        logging.info(
+        logging.debug(
             f"[Rank: {self.rank}] BatchSize: {CHUNK_SIZE}, \
                             max_count: {max_count}, \
                             splits: {num_splits}, \

@@ -140,6 +140,15 @@ class UnitGraph::COO : public BaseHeteroGraph {
     return COO(meta_graph_, adj_.CopyTo(ctx));
   }
 
+  /**
+   * @brief Copy the adj_ to pinned memory.
+   * @return COOMatrix of the COO graph.
+   */
+  COO PinMemory() {
+    if (adj_.is_pinned) return *this;
+    return COO(meta_graph_, adj_.PinMemory());
+  }
+
   /** @brief Pin the adj_: COOMatrix of the COO graph. */
   void PinMemory_() { adj_.PinMemory_(); }
 
@@ -533,6 +542,15 @@ class UnitGraph::CSR : public BaseHeteroGraph {
     } else {
       return CSR(meta_graph_, adj_.CopyTo(ctx));
     }
+  }
+
+  /**
+   * @brief Copy the adj_ to pinned memory.
+   * @return CSRMatrix of the CSR graph.
+   */
+  CSR PinMemory() {
+    if (adj_.is_pinned) return *this;
+    return CSR(meta_graph_, adj_.PinMemory());
   }
 
   /** @brief Pin the adj_: CSRMatrix of the CSR graph. */
@@ -1259,6 +1277,37 @@ HeteroGraphPtr UnitGraph::CopyTo(HeteroGraphPtr g, const DGLContext& ctx) {
   }
 }
 
+HeteroGraphPtr UnitGraph::PinMemory() {
+  CSRPtr pinned_in_csr, pinned_out_csr;
+  COOPtr pinned_coo;
+  if (this->in_csr_->defined() && this->in_csr_->IsPinned()) {
+    pinned_in_csr = this->in_csr_;
+  } else if (this->in_csr_->defined()) {
+    pinned_in_csr = CSRPtr(new CSR(this->in_csr_->PinMemory()));
+  } else {
+    pinned_in_csr = nullptr;
+  }
+
+  if (this->out_csr_->defined() && this->out_csr_->IsPinned()) {
+    pinned_out_csr = this->out_csr_;
+  } else if (this->out_csr_->defined()) {
+    pinned_out_csr = CSRPtr(new CSR(this->out_csr_->PinMemory()));
+  } else {
+    pinned_out_csr = nullptr;
+  }
+
+  if (this->coo_->defined() && this->coo_->IsPinned()) {
+    pinned_coo = this->coo_;
+  } else if (this->coo_->defined()) {
+    pinned_coo = COOPtr(new COO(this->coo_->PinMemory()));
+  } else {
+    pinned_coo = nullptr;
+  }
+
+  return HeteroGraphPtr(new UnitGraph(
+      meta_graph(), pinned_in_csr, pinned_out_csr, pinned_coo, this->formats_));
+}
+
 void UnitGraph::PinMemory_() {
   if (this->in_csr_->defined()) this->in_csr_->PinMemory_();
   if (this->out_csr_->defined()) this->out_csr_->PinMemory_();
@@ -1480,18 +1529,28 @@ HeteroGraphPtr UnitGraph::GetFormat(SparseFormat format) const {
 }
 
 HeteroGraphPtr UnitGraph::GetGraphInFormat(dgl_format_code_t formats) const {
-  if (formats == ALL_CODE)
+  // Get the created formats.
+  auto created_formats = GetCreatedFormats();
+  // Get the intersection of formats and created_formats.
+  auto intersection = formats & created_formats;
+
+  // If the intersection of formats and created_formats is not empty.
+  // The format(s) in the intersection will be retained.
+  if (intersection != 0) {
+    COOPtr coo_ptr = COO_CODE & intersection ? GetCOO(false) : nullptr;
+    CSRPtr in_csr_ptr = CSC_CODE & intersection ? GetInCSR(false) : nullptr;
+    CSRPtr out_csr_ptr = CSR_CODE & intersection ? GetOutCSR(false) : nullptr;
+
     return HeteroGraphPtr(
-        // TODO(xiangsx) Make it as graph storage.Clone()
-        new UnitGraph(
-            meta_graph_,
-            (in_csr_->defined()) ? CSRPtr(new CSR(*in_csr_)) : nullptr,
-            (out_csr_->defined()) ? CSRPtr(new CSR(*out_csr_)) : nullptr,
-            (coo_->defined()) ? COOPtr(new COO(*coo_)) : nullptr, formats));
+        new UnitGraph(meta_graph_, in_csr_ptr, out_csr_ptr, coo_ptr, formats));
+  }
+
+  // If the intersection of formats and created_formats is empty.
+  // Create a format in the order of COO -> CSR -> CSC.
   int64_t num_vtypes = NumVertexTypes();
-  if (formats & COO_CODE)
+  if (COO_CODE & formats)
     return CreateFromCOO(num_vtypes, GetCOO(false)->adj(), formats);
-  if (formats & CSR_CODE)
+  if (CSR_CODE & formats)
     return CreateFromCSR(num_vtypes, GetOutCSR(false)->adj(), formats);
   return CreateFromCSC(num_vtypes, GetInCSR(false)->adj(), formats);
 }

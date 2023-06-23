@@ -23,14 +23,14 @@ shared_workspace = os.environ.get(
 def create_graph(num_part, dist_graph_path, hetero):
     if not hetero:
         g = dgl.rand_graph(10000, 42000)
-        g.ndata["feat"] = F.unsqueeze(F.arange(0, g.number_of_nodes()), 1)
-        g.edata["feat"] = F.unsqueeze(F.arange(0, g.number_of_edges()), 1)
+        g.ndata["feat"] = F.unsqueeze(F.arange(0, g.num_nodes()), 1)
+        g.edata["feat"] = F.unsqueeze(F.arange(0, g.num_edges()), 1)
         g.ndata["in_degrees"] = g.in_degrees()
         g.ndata["out_degrees"] = g.out_degrees()
 
         etype = g.etypes[0]
         ntype = g.ntypes[0]
-        edge_u, edge_v = g.find_edges(F.arange(0, g.number_of_edges(etype)))
+        edge_u, edge_v = g.find_edges(F.arange(0, g.num_edges(etype)))
         g.edges[etype].data["edge_u"] = edge_u
         g.edges[etype].data["edge_v"] = edge_v
 
@@ -66,15 +66,15 @@ def create_graph(num_part, dist_graph_path, hetero):
         g = dgl.heterograph(edges, num_nodes)
 
         g.nodes["n1"].data["feat"] = F.unsqueeze(
-            F.arange(0, g.number_of_nodes("n1")), 1
+            F.arange(0, g.num_nodes("n1")), 1
         )
         g.edges["r1"].data["feat"] = F.unsqueeze(
-            F.arange(0, g.number_of_edges("r1")), 1
+            F.arange(0, g.num_edges("r1")), 1
         )
 
         for _, etype, _ in etypes:
             edge_u, edge_v = g.find_edges(
-                F.arange(0, g.number_of_edges(etype)), etype=etype
+                F.arange(0, g.num_edges(etype)), etype=etype
             )
             g.edges[etype].data["edge_u"] = edge_u
             g.edges[etype].data["edge_v"] = edge_v
@@ -96,12 +96,11 @@ def create_graph(num_part, dist_graph_path, hetero):
 
 
 @unittest.skipIf(os.name == "nt", reason="Do not support windows yet")
-@pytest.mark.parametrize("net_type", ["tensorpipe", "socket"])
 @pytest.mark.parametrize("num_servers", [1, 4])
 @pytest.mark.parametrize("num_clients", [1, 4])
 @pytest.mark.parametrize("hetero", [False, True])
 @pytest.mark.parametrize("shared_mem", [False, True])
-def test_dist_objects(net_type, num_servers, num_clients, hetero, shared_mem):
+def test_dist_objects(num_servers, num_clients, hetero, shared_mem):
     if not shared_mem and num_servers > 1:
         pytest.skip(
             f"Backup servers are not supported when shared memory is disabled"
@@ -126,7 +125,6 @@ def test_dist_objects(net_type, num_servers, num_clients, hetero, shared_mem):
         f"DIST_DGL_TEST_NUM_PART={num_part} "
         f"DIST_DGL_TEST_NUM_SERVER={num_servers} "
         f"DIST_DGL_TEST_NUM_CLIENT={num_clients} "
-        f"DIST_DGL_TEST_NET_TYPE={net_type} "
         f"DIST_DGL_TEST_GRAPH_PATH={dist_graph_path} "
         f"DIST_DGL_TEST_IP_CONFIG={ip_config} "
     )

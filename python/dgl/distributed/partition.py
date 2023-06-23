@@ -1,6 +1,7 @@
 """Functions for partitions. """
 
 import json
+import logging
 import os
 import time
 
@@ -23,6 +24,7 @@ from .graph_partition_book import (
     _etype_tuple_to_str,
     RangePartitionBook,
 )
+
 
 RESERVED_FIELD_DTYPE = {
     "inner_node": F.uint8,  # A flag indicates whether the node is inside a partition.
@@ -72,7 +74,7 @@ def _dump_part_config(part_config, part_metadata):
     """Format and dump part config."""
     part_metadata = _format_part_metadata(part_metadata, _etype_tuple_to_str)
     with open(part_config, "w") as outfile:
-        json.dump(part_metadata, outfile, sort_keys=True, indent=4)
+        json.dump(part_metadata, outfile, sort_keys=False, indent=4)
 
 
 def _save_graphs(filename, g_list, formats=None, sort_etypes=False):
@@ -190,7 +192,16 @@ def load_partition(part_config, part_id, load_feats=True):
     assert (
         "part_graph" in part_files
     ), "the partition does not contain graph structure."
-    graph = load_graphs(relative_to_config(part_files["part_graph"]))[0][0]
+    partition_path = relative_to_config(part_files["part_graph"])
+    logging.info(
+        "Start to load partition from %s which is "
+        "%d bytes. It may take non-trivial "
+        "time for large partition.",
+        partition_path,
+        os.path.getsize(partition_path),
+    )
+    graph = load_graphs(partition_path)[0][0]
+    logging.info("Finished loading partition.")
 
     assert (
         NID in graph.ndata
@@ -294,10 +305,24 @@ def load_partition_feats(
     ), "the partition does not contain edge feature."
     node_feats = None
     if load_nodes:
-        node_feats = load_tensors(relative_to_config(part_files["node_feats"]))
+        feat_path = relative_to_config(part_files["node_feats"])
+        logging.debug(
+            "Start to load node data from %s which is " "%d bytes.",
+            feat_path,
+            os.path.getsize(feat_path),
+        )
+        node_feats = load_tensors(feat_path)
+        logging.info("Finished loading node data.")
     edge_feats = None
     if load_edges:
-        edge_feats = load_tensors(relative_to_config(part_files["edge_feats"]))
+        feat_path = relative_to_config(part_files["edge_feats"])
+        logging.debug(
+            "Start to load edge data from %s which is " "%d bytes.",
+            feat_path,
+            os.path.getsize(feat_path),
+        )
+        edge_feats = load_tensors(feat_path)
+        logging.info("Finished loading edge data.")
     # In the old format, the feature name doesn't contain node/edge type.
     # For compatibility, let's add node/edge types to the feature names.
     if node_feats is not None:
@@ -395,6 +420,24 @@ def load_partition_book(part_config, part_id):
 
     node_map = _get_part_ranges(node_map)
     edge_map = _get_part_ranges(edge_map)
+
+    # Sort the node/edge maps by the node/edge type ID.
+    node_map = dict(sorted(node_map.items(), key=lambda x: ntypes[x[0]]))
+    edge_map = dict(sorted(edge_map.items(), key=lambda x: etypes[x[0]]))
+
+    def _assert_is_sorted(id_map):
+        id_ranges = np.array(list(id_map.values()))
+        ids = []
+        for i in range(num_parts):
+            ids.append(id_ranges[:, i, :])
+        ids = np.array(ids).flatten()
+        assert np.all(
+            ids[:-1] <= ids[1:]
+        ), f"The node/edge map is not sorted: {ids}"
+
+    _assert_is_sorted(node_map)
+    _assert_is_sorted(edge_map)
+
     return (
         RangePartitionBook(
             part_id, num_parts, node_map, edge_map, ntypes, etypes
@@ -729,7 +772,7 @@ def partition_graph(
                     num_ntypes += len(uniq_ntypes)
                 else:
                     g.nodes[key].data["bal_ntype"] = (
-                        F.ones((g.number_of_nodes(key),), F.int32, F.cpu())
+                        F.ones((g.num_nodes(key),), F.int32, F.cpu())
                         * num_ntypes
                     )
                     num_ntypes += 1
@@ -779,34 +822,33 @@ def partition_graph(
                 )
             )
 
-        node_parts = F.zeros((sim_g.number_of_nodes(),), F.int64, F.cpu())
+        node_parts = F.zeros((sim_g.num_nodes(),), F.int64, F.cpu())
         parts = {0: sim_g.clone()}
-        orig_nids = parts[0].ndata[NID] = F.arange(0, sim_g.number_of_nodes())
-        orig_eids = parts[0].edata[EID] = F.arange(0, sim_g.number_of_edges())
+        orig_nids = parts[0].ndata[NID] = F.arange(0, sim_g.num_nodes())
+        orig_eids = parts[0].edata[EID] = F.arange(0, sim_g.num_edges())
         # For one partition, we don't really shuffle nodes and edges. We just need to simulate
         # it and set node data and edge data of orig_id.
         parts[0].ndata["orig_id"] = orig_nids
         parts[0].edata["orig_id"] = orig_eids
         if return_mapping:
             if g.is_homogeneous:
-                orig_nids = F.arange(0, sim_g.number_of_nodes())
-                orig_eids = F.arange(0, sim_g.number_of_edges())
+                orig_nids = F.arange(0, sim_g.num_nodes())
+                orig_eids = F.arange(0, sim_g.num_edges())
             else:
                 orig_nids = {
-                    ntype: F.arange(0, g.number_of_nodes(ntype))
-                    for ntype in g.ntypes
+                    ntype: F.arange(0, g.num_nodes(ntype)) for ntype in g.ntypes
                 }
                 orig_eids = {
-                    etype: F.arange(0, g.number_of_edges(etype))
+                    etype: F.arange(0, g.num_edges(etype))
                     for etype in g.canonical_etypes
                 }
         parts[0].ndata["inner_node"] = F.ones(
-            (sim_g.number_of_nodes(),),
+            (sim_g.num_nodes(),),
             RESERVED_FIELD_DTYPE["inner_node"],
             F.cpu(),
         )
         parts[0].edata["inner_edge"] = F.ones(
-            (sim_g.number_of_edges(),),
+            (sim_g.num_edges(),),
             RESERVED_FIELD_DTYPE["inner_edge"],
             F.cpu(),
         )
@@ -851,7 +893,7 @@ def partition_graph(
                 )
             )
         else:
-            node_parts = random_choice(num_parts, sim_g.number_of_nodes())
+            node_parts = random_choice(num_parts, sim_g.num_nodes())
         start = time.time()
         parts, orig_nids, orig_eids = partition_graph_with_halo(
             sim_g, node_parts, num_hops, reshuffle=True
@@ -952,7 +994,7 @@ def partition_graph(
                     ]
                 )
             val = np.cumsum(val).tolist()
-            assert val[-1] == g.number_of_nodes(ntype)
+            assert val[-1] == g.num_nodes(ntype)
         for etype in g.canonical_etypes:
             etype_id = g.get_etype_id(etype)
             val = []
@@ -971,7 +1013,7 @@ def partition_graph(
                     [int(inner_eids[0]), int(inner_eids[-1]) + 1]
                 )
             val = np.cumsum(val).tolist()
-            assert val[-1] == g.number_of_edges(etype)
+            assert val[-1] == g.num_edges(etype)
     else:
         node_map_val = {}
         edge_map_val = {}
@@ -1009,8 +1051,8 @@ def partition_graph(
     etypes = {etype: g.get_etype_id(etype) for etype in g.canonical_etypes}
     part_metadata = {
         "graph_name": graph_name,
-        "num_nodes": g.number_of_nodes(),
-        "num_edges": g.number_of_edges(),
+        "num_nodes": g.num_nodes(),
+        "num_edges": g.num_edges(),
         "part_method": part_method,
         "num_parts": num_parts,
         "halo_hops": num_hops,
@@ -1052,7 +1094,7 @@ def partition_graph(
                 else:
                     print(
                         "part {} has {} nodes and {} are inside the partition".format(
-                            part_id, part.number_of_nodes(), len(local_nodes)
+                            part_id, part.num_nodes(), len(local_nodes)
                         )
                     )
 
@@ -1086,7 +1128,7 @@ def partition_graph(
                 else:
                     print(
                         "part {} has {} edges and {} are inside the partition".format(
-                            part_id, part.number_of_edges(), len(local_edges)
+                            part_id, part.num_edges(), len(local_edges)
                         )
                     )
                 tot_num_inner_edges += len(local_edges)
@@ -1166,14 +1208,68 @@ def partition_graph(
 
     _dump_part_config(f"{out_path}/{graph_name}.json", part_metadata)
 
-    num_cuts = sim_g.number_of_edges() - tot_num_inner_edges
+    num_cuts = sim_g.num_edges() - tot_num_inner_edges
     if num_parts == 1:
         num_cuts = 0
     print(
         "There are {} edges in the graph and {} edge cuts for {} partitions.".format(
-            g.number_of_edges(), num_cuts, num_parts
+            g.num_edges(), num_cuts, num_parts
         )
     )
 
     if return_mapping:
         return orig_nids, orig_eids
+
+
+def convert_dgl_partition_to_csc_sampling_graph(part_config):
+    """Convert partitions of dgl to CSCSamplingGraph of GraphBolt.
+
+    This API converts `DGLGraph` partitions to `CSCSamplingGraph` which is
+    dedicated for sampling in `GraphBolt`. New graphs will be stored alongside
+    original graph as `csc_sampling_graph.tar`.
+
+    In the near future, partitions are supposed to be saved as
+    `CSCSamplingGraph` directly. At that time, this API should be deprecated.
+
+    Parameters
+    ----------
+    part_config : str
+        The partition configuration JSON file.
+    """
+    # As only this function requires GraphBolt for now, let's import here.
+    from .. import graphbolt
+
+    part_meta = _load_part_config(part_config)
+    num_parts = part_meta["num_parts"]
+
+    # Utility functions.
+    def init_type_per_edge(graph, gpb):
+        etype_ids = gpb.map_to_per_etype(graph.edata[EID])[0]
+        return etype_ids
+
+    # Iterate over partitions.
+    for part_id in range(num_parts):
+        graph, _, _, gpb, _, _, _ = load_partition(
+            part_config, part_id, load_feats=False
+        )
+        # Construct GraphMetadata.
+        _, _, ntypes, etypes = load_partition_book(part_config, part_id)
+        metadata = graphbolt.GraphMetadata(ntypes, etypes)
+        # Obtain CSC indtpr and indices.
+        indptr, indices, _ = graph.adj().csc()
+        # Initalize type per edge.
+        type_per_edge = init_type_per_edge(graph, gpb)
+        type_per_edge = type_per_edge.to(RESERVED_FIELD_DTYPE[ETYPE])
+        # Sanity check.
+        assert len(type_per_edge) == graph.num_edges()
+        csc_graph = graphbolt.from_csc(
+            indptr, indices, None, type_per_edge, metadata
+        )
+        orig_graph_path = os.path.join(
+            os.path.dirname(part_config),
+            part_meta[f"part-{part_id}"]["part_graph"],
+        )
+        csc_graph_path = os.path.join(
+            os.path.dirname(orig_graph_path), "csc_sampling_graph.tar"
+        )
+        graphbolt.save_csc_sampling_graph(csc_graph, csc_graph_path)
