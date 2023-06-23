@@ -203,7 +203,8 @@ if __name__ == "__main__":
 
     # load and preprocess dataset
     print("Loading data")
-    dataset = DglLinkPropPredDataset("ogbl-citation2")
+    # dataset = DglLinkPropPredDataset("ogbl-citation2")
+    dataset = DglLinkPropPredDataset("ogbl-citation2",root = "D:\ML\Dataset\GNN DataSet\ogb_data")
     g = dataset[0]
     g = g.to("cuda" if args.mode == "puregpu" else "cpu")
     device = torch.device("cpu" if args.mode == "cpu" else "cuda")
